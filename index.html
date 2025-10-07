@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flip-Flop Timing Diagram Tool</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background-color: #f0f0f0; margin: 0; padding: 20px; }
+        .controls { margin: 10px 0; display: flex; justify-content: center; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .control-group { border: 1px solid #ccc; padding: 10px; border-radius: 8px; background-color: #f9f9f9; }
+        canvas { border: 1px solid #ccc; background-color: #fff; cursor: crosshair; }
+        button, select, input { padding: 10px; margin: 5px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; }
+        input[type="number"] { width: 60px; }
+    </style>
+</head>
+<body>
+    <h1>Flip-Flop Timing Diagram Tool</h1>
+    <div class="controls">
+        <div class="control-group">
+            <label for="flipflop-type">Flip-Flop:</label>
+            <select id="flipflop-type">
+                <option value="D">D Type</option>
+                <option value="T">T Type (Toggle)</option>
+                <option value="JK">JK Type</option>
+            </select>
+            <label for="initial-q">Initial Q:</label>
+            <select id="initial-q">
+                <option value="0">0</option>
+                <option value="1">1</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="trigger-type">Trigger:</label>
+            <select id="trigger-type">
+                <option value="positive">Positive Edge</option>
+                <option value="negative">Negative Edge</option>
+            </select>
+            <label for="async-level">Async Active:</label>
+            <select id="async-level">
+                <option value="low">Low</option>
+                <option value="high">High</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="snap-columns">Snap Cols:</label>
+            <input type="number" id="snap-columns" value="16" min="4" max="128">
+        </div>
+        <div class="control-group">
+            <button id="solve-button">Solve</button>
+            <button id="undo-button">Undo</button>
+            <button id="clear-button">Clear</button>
+            <button id="save-button">Save Image</button>
+        </div>
+    </div>
+    <canvas id="timing-diagram" width="800"></canvas>
+
+    <script>
+        const canvas = document.getElementById('timing-diagram');
+        const ctx = canvas.getContext('2d');
+        const solveButton = document.getElementById('solve-button');
+        const clearButton = document.getElementById('clear-button');
+        const undoButton = document.getElementById('undo-button');
+        const saveButton = document.getElementById('save-button');
+        const triggerTypeSelect = document.getElementById('trigger-type');
+        const snapInput = document.getElementById('snap-columns');
+        const ffSelect = document.getElementById('flipflop-type');
+        const asyncLevelSelect = document.getElementById('async-level');
+        const initialQSelect = document.getElementById('initial-q');
+
+        const qBarLabel = "Q\u0305";
+        const signals = { 'CLK': [], 'PRE': [], 'CLR': [], 'D': [], 'T': [], 'J': [], 'K': [] };
+        let history = [], columnBoundaries = [], activeSignals = [], numRows, rowHeight;
+        let isDrawing = false, currentRow = -1;
+
+        const flipFlopConfigs = {
+            'D': { signals: ['CLK', 'PRE', 'CLR', 'D', 'Q', qBarLabel] },
+            'T': { signals: ['CLK', 'PRE', 'CLR', 'T', 'Q', qBarLabel] },
+            'JK': { signals: ['CLK', 'PRE', 'CLR', 'J', 'K', 'Q', qBarLabel] }
+        };
+
+        function updateUIForFlipFlopType() {
+            const ffType = ffSelect.value;
+            activeSignals = flipFlopConfigs[ffType].signals;
+            numRows = activeSignals.length; rowHeight = 80;
+            canvas.height = numRows * rowHeight;
+            updateColumnBoundaries();
+            redrawAllWaves();
+        }
+
+        function updateColumnBoundaries() {
+            const numberOfColumns = parseInt(snapInput.value, 10);
+            columnBoundaries = [0];
+            for (let i = 1; i <= numberOfColumns; i++) {
+                columnBoundaries.push(Math.round(i * (canvas.width / numberOfColumns)));
+            }
+        }
+
+        function saveState() {
+            const state = {};
+            for(const key in signals) { state[key] = [...signals[key]]; }
+            history.push(state);
+        }
+
+        function undo() {
+            if (history.length > 1) {
+                history.pop();
+                const prevState = history[history.length - 1];
+                for(let key in signals) { signals[key] = [...prevState[key]]; }
+                redrawAllWaves();
+            }
+        }
+        
+        function drawGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+
+            for (let i = 0; i <= numRows; i++) {
+                const y = i * rowHeight;
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+                if (i < numRows) {
+                    ctx.fillStyle = '#333';
+                    ctx.font = 'bold 20px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(activeSignals[i], 10, y + rowHeight / 2 + 8);
+                    
+                    ctx.fillStyle = '#aaa';
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'right';
+                    const highWaveY = y + (rowHeight * 0.1);
+                    const lowWaveY = y + (rowHeight * 0.9);
+                    const textVerticalOffset = 4;
+                    ctx.fillText('1', 50, highWaveY + textVerticalOffset);
+                    ctx.fillText('0', 50, lowWaveY + textVerticalOffset);
+                }
+            }
+
+            ctx.strokeStyle = '#f0f0f0';
+            for (let i = 1; i < columnBoundaries.length - 1; i++) {
+                const x = columnBoundaries[i];
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+        }
+
+        function drawWave(signalName, rowIndex) {
+            const signalData = signals[signalName];
+            if (!signalData || signalData.length === 0) return;
+            const yOffset = rowIndex * rowHeight;
+            ctx.strokeStyle = 'black'; ctx.lineWidth = 2; ctx.beginPath();
+            for (let x = 0; x < canvas.width; x++) {
+                const y = yOffset + (1 - signalData[x]) * (rowHeight * 0.8) + (rowHeight * 0.1);
+                if (x === 0) { ctx.moveTo(x, y); } 
+                else {
+                    const prevY = yOffset + (1 - signalData[x-1]) * (rowHeight * 0.8) + (rowHeight * 0.1);
+                    if (signalData[x] !== signalData[x-1]) ctx.lineTo(x, prevY);
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.stroke();
+        }
+
+        function redrawAllWaves() {
+            drawGrid();
+            activeSignals.forEach((name, index) => {
+                if(name !== 'Q' && name !== qBarLabel) drawWave(name, index);
+            });
+        }
+        
+        function solve() {
+            const triggerType = triggerTypeSelect.value, ffType = ffSelect.value;
+            const activeLevel = asyncLevelSelect.value;
+            const activeState = (activeLevel === 'high') ? 1 : 0;
+            const inactiveState = 1 - activeState;
+            const clk = signals['CLK'], pre = signals['PRE'], clr = signals['CLR'];
+            const q = new Array(canvas.width).fill(0), q_bar = new Array(canvas.width).fill(1);
+            
+            let lastQ = parseInt(initialQSelect.value, 10);
+
+            for (let x = 0; x < canvas.width; x++) {
+                let hasAsyncOverride = false;
+                
+                if (pre[x] === activeState && clr[x] === inactiveState) {
+                    lastQ = 1; hasAsyncOverride = true;
+                } else if (pre[x] === inactiveState && clr[x] === activeState) {
+                    lastQ = 0; hasAsyncOverride = true;
+                } else if (pre[x] === activeState && clr[x] === activeState) {
+                    hasAsyncOverride = true;
+                }
+
+                if (!hasAsyncOverride && x > 0) {
+                    const trigger = (triggerType === 'positive' && clk[x-1]===0 && clk[x]===1) || 
+                                  (triggerType === 'negative' && clk[x-1]===1 && clk[x]===0);
+                    if (trigger) {
+                        if (ffType === 'D') { lastQ = signals['D'][x-1]; }
+                        else if (ffType === 'T') { if (signals['T'][x-1] === 1) lastQ = 1 - lastQ; }
+                        else if (ffType === 'JK') {
+                            const j = signals['J'][x-1], k = signals['K'][x-1];
+                            if (j === 1 && k === 1) lastQ = 1 - lastQ;
+                            else if (j === 0 && k === 1) lastQ = 0;
+                            else if (j === 1 && k === 0) lastQ = 1;
+                        }
+                    }
+                }
+                
+                if (pre[x] === activeState && clr[x] === activeState) {
+                    q[x] = 1; q_bar[x] = 1; 
+                } else {
+                    q[x] = lastQ;
+                    q_bar[x] = 1 - lastQ;
+                }
+            }
+            
+            redrawAllWaves();
+            signals['Q'] = q; signals[qBarLabel] = q_bar;
+            drawWave('Q', activeSignals.indexOf('Q'));
+            drawWave(qBarLabel, activeSignals.indexOf(qBarLabel));
+            
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            for (let x = 1; x < canvas.width; x++) {
+                const isAsync = pre[x] === activeState || clr[x] === activeState;
+                if (!isAsync) {
+                    const trigger = (triggerType === 'positive' && clk[x-1]===0 && clk[x]===1) || 
+                                  (triggerType === 'negative' && clk[x-1]===1 && clk[x]===0);
+                    if (trigger) {
+                        ctx.beginPath();
+                        ctx.moveTo(x, 0);
+                        ctx.lineTo(x, canvas.height);
+                        ctx.stroke();
+                    }
+                }
+            }
+            ctx.setLineDash([]);
+        }
+
+        function clear(doSaveState = true) {
+            const activeLevel = asyncLevelSelect.value;
+            const inactiveState = (activeLevel === 'high') ? 0 : 1;
+            for(let key in signals) {
+                const defaultValue = (key === 'PRE' || key === 'CLR') ? inactiveState : 0;
+                signals[key] = new Array(canvas.width).fill(defaultValue);
+            }
+            if(doSaveState) { history = []; saveState(); }
+            redrawAllWaves();
+        }
+        
+        function handleDraw(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX || e.touches[0].clientX) - rect.left;
+            const mouseY = (e.clientY || e.touches[0].clientY) - rect.top;
+            const signalName = activeSignals[currentRow];
+            if (signalName === 'Q' || signalName === qBarLabel) return;
+            const value = (mouseY % rowHeight) < rowHeight / 2 ? 1 : 0;
+            const colIndex = columnBoundaries.findIndex(b => mouseX < b) - 1;
+            if (colIndex < 0) return;
+            const startX = columnBoundaries[colIndex], endX = columnBoundaries[colIndex + 1];
+            for (let i = startX; i < endX; i++) signals[signalName][i] = value;
+            redrawAllWaves();
+        }
+
+        function startDrawing(e) {
+            const rect = canvas.getBoundingClientRect();
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            currentRow = Math.floor(y / rowHeight);
+            if (currentRow < activeSignals.length) {
+                const signalName = activeSignals[currentRow];
+                if (signalName !== 'Q' && signalName !== qBarLabel) { isDrawing = true; handleDraw(e); }
+            }
+        }
+
+        function stopDrawing() {
+            if (isDrawing) saveState();
+            isDrawing = false; currentRow = -1;
+        }
+
+        function handleMajorConfigChange() {
+            updateUIForFlipFlopType();
+            clear();
+        }
+
+        function handleMinorConfigChange() {
+            updateUIForFlipFlopType();
+        }
+        
+        function handleAsyncLevelChange() {
+            const activeLevel = asyncLevelSelect.value;
+            const inactiveState = (activeLevel === 'high') ? 0 : 1;
+            signals['PRE'] = new Array(canvas.width).fill(inactiveState);
+            signals['CLR'] = new Array(canvas.width).fill(inactiveState);
+            updateUIForFlipFlopType();
+            saveState();
+        }
+
+        function saveImage() {
+            const link = document.createElement('a');
+            link.download = 'timing-diagram.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', handleDraw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseleave', stopDrawing);
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', handleDraw, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing);
+        solveButton.addEventListener('click', solve);
+        clearButton.addEventListener('click', () => clear(true));
+        undoButton.addEventListener('click', undo);
+        saveButton.addEventListener('click', saveImage);
+        snapInput.addEventListener('change', handleMajorConfigChange);
+        ffSelect.addEventListener('change', handleMajorConfigChange);
+        asyncLevelSelect.addEventListener('change', handleAsyncLevelChange);
+        triggerTypeSelect.addEventListener('change', handleMinorConfigChange);
+        initialQSelect.addEventListener('change', handleMinorConfigChange);
+
+        updateUIForFlipFlopType();
+        clear(true);
+    </script>
+</body>
+</html>
