@@ -28,7 +28,7 @@ It's the perfect tool for students learning digital electronics, engineers who n
 
 ## How to Use
 
-1.  **Download:** Download the `timing_diagram.html` file from this repository.
+1.  **Download:** Download the `index.html` file from this repository.
 2.  **Open:** Open the file in your favorite web browser (e.g., Chrome, Firefox, Safari, Edge).
 3.  **Configure:** Use the dropdown menus at the top to select your desired Flip-Flop Type, Trigger Edge, and other simulation parameters.
 4.  **Draw:** Click and drag on the input rows (`CLK`, `D`, etc.) to create your desired input waveforms. The drawing will automatically snap to the grid columns.
